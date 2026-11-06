@@ -1,0 +1,41 @@
+# ---- Private data: never commit -------------------------------------------
+data/
+private-knowledge/
+logs/
+jarvis.env
+*.env
+!*.env.example
+secret_key
+system_prompt.md
+README.local.md
+**/corrections.json
+**/seeds.json
+
+# Claude exports / raw dumps that might be dropped here by accident
+*.zip
+conversations*.json
+manifest-*.json
+
+# Credentials of any kind
+credentials*.json
+token*.json
+*.pem
+*.key
+.env*
+!.env.example
+
+# ---- Caches / tooling ------------------------------------------------------
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.venv/
+venv/
+.DS_Store
+*.log
+*.sqlite
+*.db
+*.db-shm
+*.db-wal
+**/neutralize.txt

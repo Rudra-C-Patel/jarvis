@@ -1,0 +1,70 @@
+#!/bin/zsh
+# Jarvis launcher: start | stop | status | sync [--low] | history <cmd> [--low] | logs
+set -u
+J="$HOME/jarvis"; LOG="$J/logs"; mkdir -p "$LOG"
+set -a; source "$J/jarvis.env"; set +a
+export DATA_DIR="$J/data/open-webui" WEBUI_SECRET_KEY="$(cat "$J/data/secret_key")"
+export PATH="/opt/homebrew/bin:$HOME/.local/bin:$PATH"
+URL="http://127.0.0.1:$JARVIS_PORT"
+
+ollama_up() { curl -sf -m 2 http://127.0.0.1:11434/api/version >/dev/null; }
+webui_up()  { curl -sf -m 2 "$URL/health" >/dev/null; }
+note() { echo "[jarvis] $*"; }
+
+# Low-priority mode (`--low` on sync/history): batch python + Ollama runners on background QoS
+# (E-cores, low I/O + GPU priority). Slower, but cooler and quieter. Restored on exit.
+LOW=0; _a=(); for _x in "$@"; do [[ "$_x" == --low ]] && LOW=1 || _a+=("$_x"); done; set -- "${_a[@]}"
+py() { if (( LOW )); then taskpolicy -b /usr/bin/python3 "$@"; else /usr/bin/python3 "$@"; fi; }
+ollama_qos() { local p; for p in $(pgrep -f "ollama serve") $(pgrep -f llama-server); do taskpolicy "$1" -p "$p" 2>/dev/null; done; true; }
+low_begin() {
+  (( LOW )) || return 0
+  note "low-priority mode: batch + Ollama on background QoS (slower, cooler). Run big batches plugged in, on a hard surface."
+  ( while kill -0 $$ 2>/dev/null; do ollama_qos -b; sleep 15; done ) &!   # catches runners loaded mid-batch
+  _W=$!; trap 'kill $_W 2>/dev/null; ollama_qos -B' EXIT INT TERM
+}
+# Open WebUI re-copies its stock loader.js on every boot, so (re)install the privacy guard after start.
+install_guard() {
+  local d; d="$(dirname "$(readlink -f "$(command -v open-webui)")")/../lib/python3.11/site-packages/open_webui/static"
+  cp "$J/web/privacy-guard.js" "$d/loader.js" && note "privacy guard installed (browser speech APIs disabled)"
+}
+
+start() {
+  if ! ollama_up; then
+    note "starting Ollama"; nohup ollama serve >>"$LOG/ollama.log" 2>&1 &!
+    for i in {1..30}; do ollama_up && break; sleep 0.5; done
+  fi
+  ollama_up || { note "Ollama failed to start; see $LOG/ollama.log"; exit 1; }
+  if ! webui_up; then
+    note "starting Open WebUI (first start takes ~30s)"
+    nohup open-webui serve --host 127.0.0.1 --port "$JARVIS_PORT" >>"$LOG/open-webui.log" 2>&1 &!
+    for i in {1..180}; do webui_up && break; sleep 1; done
+  fi
+  webui_up || { note "Open WebUI failed to start; see $LOG/open-webui.log"; exit 1; }
+  install_guard
+  note "syncing vault (read-only)"; /usr/bin/python3 "$J/bin/sync.py" 2>&1 | tee -a "$LOG/sync.log"
+  /usr/bin/python3 "$J/bin/history.py" status 2>/dev/null | grep "NEW EXPORT" && note "a newer Claude export is in ~/Downloads: run \`jarvis sync\` to ingest it (takes a while: local summaries)"
+  # warm the model so the first reply is fast
+  curl -s -m 120 http://127.0.0.1:11434/api/generate -d "{\"model\":\"$JARVIS_BASE_MODEL\",\"keep_alive\":\"$OLLAMA_KEEP_ALIVE\"}" >/dev/null &!
+  [[ "${1:-}" == "--no-browser" ]] || open "$URL/?model=jarvis"
+  note "ready at $URL"
+}
+
+stop() {
+  pkill -f "open-webui serve --host 127.0.0.1 --port $JARVIS_PORT" && note "stopped Open WebUI"
+  pkill -f "ollama serve" && note "stopped Ollama"
+  true
+}
+
+case "${1:-start}" in
+  start)  start "${2:-}";;
+  stop)   stop;;
+  restart) stop; sleep 2; start "${2:-}";;
+  status) ollama_up && note "Ollama: up" || note "Ollama: down"; webui_up && note "Open WebUI: up at $URL" || note "Open WebUI: down";;
+  sync)   ollama_up && webui_up || { note "Jarvis isn't running; start it first (jarvis start --no-browser)"; exit 1; }
+          low_begin
+          py "$J/bin/history.py" all 2>&1 | tee -a "$LOG/history.log"
+          py "$J/bin/sync.py" 2>&1 | tee -a "$LOG/sync.log";;
+  history) shift; low_begin; py "$J/bin/history.py" "$@";;
+  logs)   tail -n 40 "$LOG"/*.log;;
+  *) echo "usage: jarvis [start|stop|restart|status|sync [--low]|history <cmd> [--low]|logs]"; exit 1;;
+esac
