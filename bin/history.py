@@ -493,7 +493,7 @@ def gen_life_context(st):
     notes = reduce_notes(notes, "Facts extracted from one personal conversation, in order (later parts are newer).")
     rules = ("Write in second person ('you'). Only facts from the notes; keep every (uncertain) mark; add (uncertain) "
              "to anything ambiguous. Compassionate, plain, no therapy-speak. Bullets only, no intro or outro. This text "
-             "is loaded into EVERY reply: summarize sexual or intimate details in one neutral, non-graphic line; omit "
+             "is loaded into EVERY reply: summarize personal relationship details in one neutral, non-graphic line; omit "
              "contact details (emails, phone numbers, handles); keep appearance/self-image items to one line total.")
     plan = [("People", 260, "the people who matter, one bullet each: who they are to you, in a few words"),
             ("Relationships", 230, "where each important relationship stands now (newest state wins)"),
